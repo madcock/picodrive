@@ -267,8 +267,6 @@ else ifeq ($(platform), sf2000)
     CXX = $(MIPS)g++
     AR = $(MIPS)ar
 	CFLAGS += -EL -G0 -mips32 -msoft-float -DSF2000
-#    CFLAGS =-EL -march=mips32 -mtune=mips32 -msoft-float -ffast-math -fomit-frame-pointer
-#    CFLAGS+=-G0 -mno-abicalls -fno-pic -ffreestanding
 	STATIC_LINKING = 1
 	STATIC_LINKING_LINK = 1
 
