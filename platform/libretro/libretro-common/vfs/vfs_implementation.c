@@ -53,7 +53,7 @@
 #  endif
 #  include <sys/types.h>
 #  include <sys/stat.h>
-#  if !defined(VITA)
+#  if !defined(VITA) && !defined(SF2000)
 #  include <dirent.h>
 #  endif
 #  include <unistd.h>
@@ -85,7 +85,9 @@
 #  endif
 #  include <sys/types.h>
 #  include <sys/stat.h>
+#  if !defined(SF2000)
 #  include <dirent.h>
+#  endif
 #  include <unistd.h>
 #endif
 
@@ -622,7 +624,7 @@ int64_t retro_vfs_file_truncate_impl(libretro_vfs_implementation_file *stream, i
 #ifdef _WIN32
    if (_chsize(_fileno(stream->fp), length) != 0)
       return -1;
-#elif !defined(VITA) && !defined(PSP) && !defined(PS2) && !defined(ORBIS) && (!defined(SWITCH) || defined(HAVE_LIBNX))
+#elif !defined(VITA) && !defined(PSP) && !defined(PS2) && !defined(ORBIS) && (!defined(SWITCH) || defined(HAVE_LIBNX)) && !defined(SF2000)
    if (ftruncate(fileno(stream->fp), (off_t)length) != 0)
       return -1;
 #endif
@@ -879,9 +881,11 @@ int retro_vfs_file_rename_impl(const char *old_path, const char *new_path)
 const char *retro_vfs_file_get_path_impl(
       libretro_vfs_implementation_file *stream)
 {
+#ifndef SF2000
    /* should never happen, do something noisy so caller can be fixed */
    if (!stream)
       abort();
+#endif
    return stream->orig_path;
 }
 
@@ -1093,6 +1097,8 @@ int retro_vfs_mkdir_impl(const char *dir)
       return -2;
    return ret < 0 ? -1 : 0;
 }
+
+#ifndef SF2000
 
 #ifdef VFS_FRONTEND
 struct retro_vfs_dir_handle
@@ -1328,3 +1334,4 @@ int retro_vfs_closedir_impl(libretro_vfs_implementation_dir *rdir)
    free(rdir);
    return 0;
 }
+#endif /* #ifndef SF2000 */
