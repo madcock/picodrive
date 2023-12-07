@@ -149,19 +149,6 @@ libretro-build-osx-arm64:
     - .libretro-osx-arm64-make-default
     - .core-defs
 
-<<<<<<< HEAD
-# MacOS PPC
-libretro-build-osx-ppc:
-  extends:
-    - .libretro-osx-ppc-make-default
-    - .core-defs
-  variables:
-    CFLAGS:   -mmacosx-version-min=10.4
-    CXXFLAGS: -mmacosx-version-min=10.4
-    LDFLAGS:  -mmacosx-version-min=10.4
-
-=======
->>>>>>> upstream/master
 ################################### CELLULAR #################################
 # Android ARMv7a
 android-armeabi-v7a:
