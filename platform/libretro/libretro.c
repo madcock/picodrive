@@ -2143,6 +2143,47 @@ void retro_run(void)
       }
    }
 
+#if defined(SF2000)
+   if (input[0] & (1 << RETRO_DEVICE_ID_JOYPAD_L))
+   {
+      unsigned mediatotal = 0;
+	  mediatotal = disk_get_num_images() - 1;
+      if (mediatotal > 1)
+      {
+          unsigned mediaindex = 0;
+          mediaindex = disk_get_image_index();
+          if (disk_set_eject_state(true))
+          {
+              mediaindex--;
+              mediaindex = (mediaindex < 0) ? 0 : mediaindex;
+              if (disk_set_image_index(mediaindex))
+              {
+                  disk_set_eject_state(false);
+              }
+          }
+      }
+   }
+   else if (input[0] & (1 << RETRO_DEVICE_ID_JOYPAD_R))
+   {
+      unsigned mediatotal = 0;
+	  mediatotal = disk_get_num_images() - 1;
+      if (mediatotal > 1)
+      {
+          unsigned mediaindex = 0;
+          mediaindex = disk_get_image_index();
+          if (disk_set_eject_state(true))
+          {
+              mediaindex++;
+              mediaindex = (mediaindex == mediatotal) ? 0 : mediaindex;
+              if (disk_set_image_index(mediaindex))
+              {
+                  disk_set_eject_state(false);
+              }
+          }
+      }
+   }
+#endif
+
    for (pad = 0; pad < padcount; pad++)
      for (i = 0; i < RETRO_PICO_MAP_LEN; i++)
 	 if (input[pad] & (1 << i))
