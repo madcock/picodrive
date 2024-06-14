@@ -1,6 +1,7 @@
 /*
  * PicoDrive
  * (C) notaz, 2006-2010
+ * (C) irixxxx, 2019-2024
  *
  * This work is licensed under the terms of MAME license.
  * See COPYING file in the top-level directory.
@@ -83,6 +84,27 @@ static void draw_cd_leds(void)
 	p(pitch*0) = p(pitch*1) = p(pitch*2) = col_g;
 	p(pitch*0 + led_offs) = p(pitch*1 + led_offs) = p(pitch*2 + led_offs) = col_r;
 #undef p
+}
+
+static void draw_pico_ptr(void)
+{
+	int up = (PicoPicohw.pen_pos[0]|PicoPicohw.pen_pos[1]) & 0x8000;
+	int o = (up ? 0x0000 : 0xffff), _ = (up ? 0xffff : 0x0000);
+	int pitch = g_screen_ppitch;
+	u16 *p = g_screen_ptr;
+	int x = pico_pen_x, y = pico_pen_y;
+	// storyware pages are actually squished, 2:1
+	int h = (pico_inp_mode == 1 ? 160 : out_h);
+	if (h < 224) y++;
+
+	x = (x * out_w * ((1ULL<<32) / 320 + 1)) >> 32;
+	y = (y *     h * ((1ULL<<32) / 224 + 1)) >> 32;
+	p += (screen_y+y)*pitch + (screen_x+x);
+
+	p[-pitch-1] ^= o; p[-pitch] ^= _; p[-pitch+1] ^= _; p[-pitch+2] ^= o;
+	p[-1]       ^= _; p[0]      ^= o; p[1]        ^= o; p[2]        ^= _;
+	p[pitch-1]  ^= _; p[pitch]  ^= o; p[pitch+1]  ^= o; p[pitch+2]  ^= _;
+	p[2*pitch-1]^= o; p[2*pitch]^= _; p[2*pitch+1]^= _; p[2*pitch+2]^= o;
 }
 
 /* render/screen buffer handling:
@@ -177,6 +199,7 @@ void pemu_finalize_frame(const char *fps, const char *notice)
 		u16 *ps = ghost_buf;
 		int y, h = currentConfig.vscaling == EOPT_SCALE_SW ? 240:out_h;
 		int w = currentConfig.scaling == EOPT_SCALE_SW ? 320:out_w;
+
 		if (currentConfig.ghosting == 1)
 			for (y = 0; y < h; y++) {
 				v_blend((u32 *)pd, (u32 *)ps, w/2, p_075_round);
@@ -189,6 +212,17 @@ void pemu_finalize_frame(const char *fps, const char *notice)
 				pd += g_screen_ppitch;
 				ps += w;
 			}
+	}
+
+	if (PicoIn.AHW & PAHW_PICO) {
+		int h = currentConfig.vscaling == EOPT_SCALE_SW ? 240:out_h;
+		int w = currentConfig.scaling == EOPT_SCALE_SW ? 320:out_w;
+		u16 *pd = screen_buffer(g_screen_ptr) + out_y*g_screen_ppitch + out_x;
+
+		if (pico_inp_mode)
+			emu_pico_overlay(pd, w, h, g_screen_ppitch);
+		if (pico_inp_mode /*== 2 || overlay*/)
+			draw_pico_ptr();
 	}
 
 	if (notice)

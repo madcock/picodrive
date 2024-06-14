@@ -80,7 +80,7 @@ static __inline void SekAimM68k(int cyc, int mult)
 
 static __inline void SekRunM68k(int cyc)
 {
-  // TODO 0x100 would by 2 cycles/128, moreover far too sensitive
+  // TODO 0x100 would be 2 cycles/128, moreover far too sensitive
   SekAimM68k(cyc, 0x10c); // OutRunners, testpico, VDPFIFOTesting
   SekSyncM68k(0);
 }
@@ -105,8 +105,8 @@ static void do_hint(struct PicoVideo *pv)
   pv->pending_ints |= 0x10;
   if (pv->reg[0] & 0x10) {
     elprintf(EL_INTS, "hint: @ %06x [%u]", SekPc, SekCyclesDone());
-    if (SekIrqLevel < 4)
-      SekInterrupt(4);
+    if (SekIrqLevel < pv->hint_irq)
+      SekInterrupt(pv->hint_irq);
   }
 }
 
@@ -250,9 +250,10 @@ static int PicoFrameHints(void)
     SekInterrupt(6);
   }
 
-  if (Pico.m.z80Run && !Pico.m.z80_reset && (PicoIn.opt&POPT_EN_Z80)) {
+  // assert Z80 interrupt for one scanline even in busrq hold (Teddy Blues)
+  if (/*Pico.m.z80Run &&*/ !Pico.m.z80_reset && (PicoIn.opt&POPT_EN_Z80)) {
     elprintf(EL_INTS, "zint");
-    z80_int();
+    z80_int_assert(1);
   }
 
   // Run scanline:
@@ -261,6 +262,10 @@ static int PicoFrameHints(void)
 
   if (PicoLineHook) PicoLineHook();
   pevt_log_m68k_o(EVT_NEXT_LINE);
+
+  if (Pico.m.z80Run && !Pico.m.z80_reset && (PicoIn.opt&POPT_EN_Z80))
+    PicoSyncZ80(Pico.t.m68c_aim);
+  z80_int_assert(0);
 
   // === VBLANK ===
   lines = Pico.m.pal ? 313 : 262;
@@ -334,7 +339,7 @@ static int PicoFrameHints(void)
   // get samples from sound chips
   PsndGetSamples(y);
 
-  timers_cycle(Pico.t.z80c_aim);
+  timers_cycle(cycles_68k_to_z80(Pico.t.m68c_aim - Pico.t.m68c_frame_start));
 
   pv->hint_cnt = hint;
 

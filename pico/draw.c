@@ -1599,7 +1599,59 @@ void BackFill(int bgc, int sh, struct PicoEState *est)
 
 // --------------------------------------------
 
-void PicoDoHighPal555_8bit(int sh, int line, struct PicoEState *est)
+static u16 *BgcDMAbase;
+static u32 BgcDMAsrc, BgcDMAmask;
+static int BgcDMAlen, BgcDMAoffs;
+
+#ifndef _ASM_DRAW_C
+static
+#endif
+// handle DMA to background color
+void BgcDMA(struct PicoEState *est)
+{
+  u16 *pd=est->DrawLineDest;
+  int len = (est->Pico->video.reg[12]&1) ? 320 : 256;
+  // TODO for now handles the line as all background.
+  int xl = (len == 320 ? 38 : 33); // DMA slots during HSYNC
+  int upscale = (est->rendstatus & PDRAW_SOFTSCALE) && len < 320;
+  u16 *q = upscale ? DefOutBuff : pd;
+  int i, l = len;
+  u16 t;
+
+  if ((est->rendstatus & PDRAW_BORDER_32) && !upscale)
+    q += (320-len) / 2;
+
+  BgcDMAlen -= ((l-BgcDMAoffs)>>1)+xl;
+  if (BgcDMAlen <= 0) {
+    // partial line
+    l += 2*BgcDMAlen;
+    est->rendstatus &= ~PDRAW_BGC_DMA;
+  }
+
+  for (i = BgcDMAoffs; i < l; i += 2) {
+    // TODO use ps to overwrite only real bg pixels
+    t = BgcDMAbase[BgcDMAsrc++ & BgcDMAmask];
+    q[i] = q[i+1] = PXCONV(t);
+  }
+  BgcDMAsrc += xl; // HSYNC DMA
+  BgcDMAoffs = 0;
+
+  t = PXCONV(PicoMem.cram[Pico.video.reg[7] & 0x3f]);
+  while (i < len) q[i++] = t; // fill partial line with BG
+
+  if (upscale) {
+    switch (PicoIn.filter) {
+    case 3: h_upscale_bl4_4_5(pd, 320, q, 256, len, f_nop); break;
+    case 2: h_upscale_bl2_4_5(pd, 320, q, 256, len, f_nop); break;
+    case 1: h_upscale_snn_4_5(pd, 320, q, 256, len, f_nop); break;
+    default: h_upscale_nn_4_5(pd, 320, q, 256, len, f_nop); break;
+    }
+  }
+}
+
+// --------------------------------------------
+
+static void PicoDoHighPal555_8bit(int sh, int line, struct PicoEState *est)
 {
   unsigned int *spal, *dpal;
   unsigned int cnt = (sh ? 1 : est->SonicPalCount+1);
@@ -1684,6 +1736,9 @@ void FinalizeLine555(int sh, int line, struct PicoEState *est)
 
   if (DrawLineDestIncrement == 0)
     return;
+
+  if (est->rendstatus & PDRAW_BGC_DMA)
+    return BgcDMA(est);
 
   PicoDrawUpdateHighPal();
 
@@ -1943,7 +1998,7 @@ PICO_INTERNAL void PicoFrameStart(void)
 
   if (est->rendstatus != rendstatus_old || lines != rendlines) {
     rendlines = lines;
-    // mode_change() might reset rendstatus_old by calling SetColorFormat
+    // mode_change() might reset rendstatus_old by calling SetOutFormat
     int rendstatus = est->rendstatus;
     emu_video_mode_change(loffs, lines, coffs, columns);
     rendstatus_old = rendstatus;
@@ -2040,17 +2095,16 @@ static void PicoLine(int line, int offs, int sh, int bgc, int off, int on)
 void PicoDrawSync(int to, int off, int on)
 {
   struct PicoEState *est = &Pico.est;
-  int line, offs = 0;
+  int line, offs;
   int sh = (est->Pico->video.reg[0xC] & 8) >> 3; // shadow/hilight?
   int bgc = est->Pico->video.reg[7] & 0x3f;
 
   pprof_start(draw);
 
-  if (rendlines != 240) {
-    offs = 8;
-    if (to > 223)
-      to = 223;
-  }
+  offs = (240-rendlines) >> 1;
+  if (to >= rendlines)
+    to = rendlines-1;
+
   if (est->DrawScanline <= to &&
                 (est->rendstatus & (PDRAW_DIRTY_SPRITES|PDRAW_PARSE_SPRITES)))
     ParseSprites(to + 1, on);
@@ -2109,6 +2163,37 @@ void PicoDrawRefreshSprites(void)
       sp[0] = (sp[0] & 0xffff0000) | (u16)sy;
     }
   }
+}
+
+void PicoDrawBgcDMA(u16 *base, u32 source, u32 mask, int dlen, int sl)
+{
+  struct PicoEState *est = &Pico.est;
+  int len = (est->Pico->video.reg[12]&1) ? 320 : 256;
+  int xl = (est->Pico->video.reg[12]&1) ? 38 : 33; // DMA slots during HSYNC
+
+  BgcDMAbase = base;
+  BgcDMAsrc = source;
+  BgcDMAmask = mask;
+  BgcDMAlen = dlen;
+  BgcDMAoffs = 0;
+
+  // handle slot offset in 1st line
+  if (sl-12 > 0) // active display output only starts at slot 12
+    BgcDMAoffs = 2*(sl-12);
+  else if (sl < 0) { // DMA starts before active display
+    BgcDMAsrc += 2*-sl;
+    BgcDMAlen -= 2*-sl;
+  }
+
+  // skip 1st line if it had been drawn already
+  if (Pico.est.DrawScanline > Pico.m.scanline) {
+    len -= BgcDMAoffs;
+    BgcDMAsrc += (len>>1)+xl;
+    BgcDMAlen -= (len>>1)+xl;
+    BgcDMAoffs = 0;
+  }
+  if (BgcDMAlen > 0)
+    est->rendstatus |= PDRAW_BGC_DMA;
 }
 
 // also works for fast renderer

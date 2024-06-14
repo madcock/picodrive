@@ -91,6 +91,9 @@ extern M68K_CONTEXT PicoCpuFM68k, PicoCpuFS68k;
 
 #ifdef EMU_M68K
 #include <cpu/musashi/m68kcpu.h>
+#undef INLINE
+#undef USE_CYCLES
+#undef ADD_CYCLES
 extern m68ki_cpu_core PicoCpuMM68k, PicoCpuMS68k;
 #ifndef SekCyclesLeft
 #define SekCyclesLeft     PicoCpuMM68k.cyc_remaining_cycles
@@ -166,7 +169,7 @@ extern struct DrZ80 drZ80;
 #define z80_run(cycles)    ((cycles) - DrZ80Run(&drZ80, cycles))
 #define z80_run_nr(cycles) DrZ80Run(&drZ80, cycles)
 #define z80_int()          drZ80.Z80_IRQ = 1
-#define z80_int_assert(a)  drZ80.Z80_IRQ = (a)
+#define z80_int_assert(a)  drZ80.Z80_IRQ = (a ? 2 : 0)
 #define z80_nmi()          drZ80.Z80IF |= 8
 
 #define z80_cyclesLeft     drZ80.cycles
@@ -312,7 +315,7 @@ struct PicoVideo
   unsigned char debug_p;      // ... parsed: PVD_*
   unsigned char addr_u;       // bit16 of .addr
   unsigned char hint_cnt;
-  unsigned char pad2;
+  unsigned char hint_irq;     // irq# of HINT (4 on MD, 5 on Pico)
   unsigned short hv_latch;    // latched hvcounter value
   signed int fifo_cnt;        // pending xfers for blocking FIFO queue entries
   signed int fifo_bgcnt;      // pending xfers for background FIFO queue entries
@@ -346,6 +349,8 @@ struct PicoMisc
 #define PMS_HW_LCD	0x2   // GG LCD
 #define PMS_HW_JAP	0x4   // japanese system
 #define PMS_HW_FM	0x8   // FM sound
+#define PMS_HW_TMS	0x10  // assume TMS9918
+#define PMS_HW_FMUSED	0x80  // FM sound accessed
 
 #define PMS_MAP_AUTO	0
 #define PMS_MAP_SEGA	1
@@ -455,6 +460,7 @@ struct PicoTiming
 
   int timer_a_next_oflow, timer_a_step; // in z80 cycles
   int timer_b_next_oflow, timer_b_step;
+  int ym2612_busy;
 
   int vcnt_wrap, vcnt_adj;
 };
@@ -473,6 +479,7 @@ struct PicoSound
   unsigned int fm_pos;                  // last FM position in Q20
   unsigned int psg_pos;                 // last PSG position in Q16
   unsigned int ym2413_pos;              // last YM2413 position
+  unsigned int pcm_pos;                 // last PCM position in Q16
   unsigned int fm_fir_mul, fm_fir_div;  // ratio for FM resampling FIR
 };
 
@@ -703,6 +710,7 @@ int CM_compareRun(int cyc, int is_sub);
 void PicoDrawInit(void);
 PICO_INTERNAL void PicoFrameStart(void);
 void PicoDrawRefreshSprites(void);
+void PicoDrawBgcDMA(u16 *base, u32 source, u32 mask, int len, int sl);
 void PicoDrawSync(int to, int blank_last_line, int limit_sprites);
 void BackFill(int reg7, int sh, struct PicoEState *est);
 void FinalizeLine555(int sh, int line, struct PicoEState *est);
@@ -732,6 +740,7 @@ void PicoDrawSetOutputSMS(pdso_t which);
 
 // memory.c
 PICO_INTERNAL void PicoMemSetup(void);
+PICO_INTERNAL u32 PicoRead16_floating(u32 a);
 u32 PicoRead8_io(u32 a);
 u32 PicoRead16_io(u32 a);
 void PicoWrite8_io(u32 a, u32 d);
@@ -838,11 +847,19 @@ unsigned int pcd_pcm_read(unsigned int a);
 // pico/pico.c
 PICO_INTERNAL void PicoInitPico(void);
 PICO_INTERNAL void PicoReratePico(void);
+PICO_INTERNAL int PicoPicoIrqAck(int level);
 
 // pico/xpcm.c
 PICO_INTERNAL void PicoPicoPCMUpdate(short *buffer, int length, int stereo);
-PICO_INTERNAL void PicoPicoPCMReset(void);
-PICO_INTERNAL void PicoPicoPCMRerate(int xpcm_rate);
+PICO_INTERNAL void PicoPicoPCMResetN(int pin);
+PICO_INTERNAL void PicoPicoPCMStartN(int pin);
+PICO_INTERNAL int PicoPicoPCMBusyN(void);
+PICO_INTERNAL void PicoPicoPCMGain(int gain);
+PICO_INTERNAL void PicoPicoPCMFilter(int index);
+PICO_INTERNAL void PicoPicoPCMIrqEn(int enable);
+PICO_INTERNAL void PicoPicoPCMRerate(void);
+PICO_INTERNAL int PicoPicoPCMSave(void *buffer, int length);
+PICO_INTERNAL void PicoPicoPCMLoad(void *buffer, int length);
 
 // sek.c
 PICO_INTERNAL void SekInit(void);
@@ -885,6 +902,8 @@ void ym2612_unpack_state(void);
 #define TIMER_B_TICK_ZCYCLES cycles_68k_to_z80(256LL*16*72*2) // Q8
 
 #define timers_cycle(ticks) \
+  if (Pico.t.ym2612_busy > 0) \
+    Pico.t.ym2612_busy -= ticks << 8; \
   if (Pico.t.timer_a_next_oflow < TIMER_NO_OFLOW) \
     Pico.t.timer_a_next_oflow -= ticks << 8; \
   if (Pico.t.timer_b_next_oflow < TIMER_NO_OFLOW) \
@@ -892,6 +911,7 @@ void ym2612_unpack_state(void);
   ym2612_sync_timers(0, ym2612.OPN.ST.mode, ym2612.OPN.ST.mode);
 
 #define timers_reset() \
+  Pico.t.ym2612_busy = 0; \
   Pico.t.timer_a_next_oflow = Pico.t.timer_b_next_oflow = TIMER_NO_OFLOW; \
   Pico.t.timer_a_step = TIMER_A_TICK_ZCYCLES * 1024; \
   Pico.t.timer_b_step = TIMER_B_TICK_ZCYCLES * 256; \
@@ -972,6 +992,7 @@ PICO_INTERNAL void PsndDoDAC(int cycle_to);
 PICO_INTERNAL void PsndDoPSG(int cyc_to);
 PICO_INTERNAL void PsndDoYM2413(int cyc_to);
 PICO_INTERNAL void PsndDoFM(int cyc_to);
+PICO_INTERNAL void PsndDoPCM(int cyc_to);
 PICO_INTERNAL void PsndClear(void);
 PICO_INTERNAL void PsndGetSamples(int y);
 PICO_INTERNAL void PsndGetSamplesMS(int y);
